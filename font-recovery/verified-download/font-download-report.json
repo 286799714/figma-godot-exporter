@@ -1,0 +1,20 @@
+﻿[
+    {
+        "family":  "Alibaba PuHuiTi",
+        "style":  "Bold",
+        "filename":  "AlibabaPuHuiTi_Bold.ttf",
+        "status":  "downloaded",
+        "source":  "https://fonts.alibabadesign.com/AlibabaPuHuiTi/Alibaba-PuHuiTi-Bold/Alibaba-PuHuiTi-Bold.ttf",
+        "message":  "",
+        "manualUrl":  "https://www.alibabafonts.com/"
+    },
+    {
+        "family":  "Alibaba PuHuiTi",
+        "style":  "Medium",
+        "filename":  "AlibabaPuHuiTi_Medium.ttf",
+        "status":  "missing",
+        "source":  "",
+        "message":  "Download is not a matching TrueType font; it was not saved.",
+        "manualUrl":  "https://www.alibabafonts.com/"
+    }
+]

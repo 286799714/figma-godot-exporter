@@ -1,0 +1,219 @@
+<script src="https://unpkg.com/fflate"></script>
+<h3>Figma to Godot</h3>
+<p>Exports data and assets to a Godot-ready format.</p>
+<label for="radio-container">Export type:</label>
+<div id="radio-container">
+    <label for="export-project" title="Export the entire project.">
+        <input type="radio" id="export-project" name="export-type" checked>
+        Project
+    </label>
+    <label for="export-page" title="Export only the current page.">
+        <input type="radio" id="export-page" name="export-type">
+        Page
+    </label>
+    <label for="export-frame" title="Exports only the current frame (if a frame is selected).">
+        <input type="radio" id="export-frame" name="export-type" disabled>
+        Frame
+    </label>
+</div>
+<div id="button-container">
+    <button type="button" id="export-zip" title="Exports layout json, images, and fonts as a single zip file.">Export all as ZIP</button>
+    <button type="button" id="export-json" title="Exports layout as a json file.">JSON only</button>
+    <button type="button" id="export-images" title="Exports all images in the current page/project as png files.">Images only</button>
+    <button type="button" id="export-fonts" title="Locates all fonts used in the current page/project and creates a batch script to download them.">Fonts only</button>
+</div>
+
+<p id="export-status" role="status" aria-live="polite"></p>
+
+<style>
+body {
+    font-family: "Segoe UI", "San Francisco Pro Text", Arial, sans-serif;
+    color: #1E1E1E;
+}
+h3 {
+    margin: 0;
+}
+p {
+    font-size: 0.8rem;
+    font-weight: 400;
+    margin: 0 0 0.25rem 0;
+    margin-bottom: 0.75rem;
+    padding: 0 0.05rem;
+}
+label {
+    font-family: "Segoe UI", "San Francisco Pro Text", Arial, sans-serif;
+    font-size: 0.8rem;
+    font-weight: 400;
+}
+label[for="radio-container"] {
+    font-weight: 600;
+}
+#radio-container {
+    margin-top: 0.2rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 0.3rem;
+}
+#radio-container > label {
+    margin: 0;
+    border: 1px solid #808080;
+    border-radius: 1rem;
+    padding: 0.2rem 0.6rem 0.35rem 0.5rem;
+    flex-grow: 1;
+    &:hover {
+        border: 1px solid #383838;
+    }
+    &:has(input[type="radio"]:checked) {
+        border: 1px solid #3273f6;
+        background: #3273f6;
+        color: #FFF;
+    }
+    &:hover:has(input[type="radio"]:checked) {
+        border: 1px solid #205cd4;
+        background: #205cd4;
+    }
+    &:has(input[type="radio"]:disabled) {
+        border: 1px solid #d3d3d3;
+        background: transparent;
+        color: #d3d3d3;
+    }
+}
+#radio-container > label > input[type="radio"] {
+    margin: 0;
+    margin-top: -0.15rem;
+    vertical-align: middle;
+}
+button {
+    background: #313131;
+    border: none;
+    color: #FFF;
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+}
+button:disabled {
+    opacity: 0.5;
+}
+#export-status {
+    margin-top: 0.75rem;
+    overflow-wrap: anywhere;
+}
+#export-status[data-error="true"] {
+    color: #b42318;
+}
+#button-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+#export-zip {
+    flex-basis: 100%;
+    flex-grow: 1;
+    flex-shrink: 0;
+}
+#export-json, #export-images, #export-fonts {
+    flex-basis: 25%;
+    flex-grow: 1;
+    white-space: nowrap;
+}
+</style>
+
+<script>
+let activeRequest = null;
+let nextRequestId = 0;
+let isFrameSelected = false;
+const statusElement = document.getElementById("export-status");
+const controls = document.querySelectorAll("button, input[name='export-type']");
+
+const updateControls = () => {
+    controls.forEach(control => { control.disabled = activeRequest !== null; });
+    const frameInput = document.getElementById("export-frame");
+    frameInput.disabled = activeRequest !== null || !isFrameSelected;
+    if (!isFrameSelected && frameInput.checked) {
+        document.getElementById("export-page").checked = true;
+    }
+};
+
+const setStatus = (message, isError = false) => {
+    statusElement.textContent = message;
+    statusElement.dataset.error = String(isError);
+};
+
+const downloadFile = (content, filename, type) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Give the browser time to start reading the blob before releasing it.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+onmessage = (event) => {
+    const message = event.data && event.data.pluginMessage;
+    if (!message) return;
+    if (message.type === "response-is-frame-selected") {
+        isFrameSelected = message.isFrameSelected;
+        updateControls();
+        return;
+    }
+    if (!activeRequest || message.requestId !== activeRequest.id) return;
+    if (message.type !== "response-error" && message.type !== `response-${activeRequest.format}`) return;
+    try {
+        if (message.type === "response-error") throw new Error(message.message);
+        if (message.type === "response-json") {
+            downloadFile(message.jsonString, "figma_layout.json", "application/json");
+        } else if (message.type === "response-images") {
+            message.images.forEach(image => {
+                downloadFile(image.data, image.filename, "image/png");
+            });
+        } else if (message.type === "response-fonts") {
+            downloadFile(message.batchScript, "figma_download_fonts.bat", "text/plain");
+        } else if (message.type === "response-zip") {
+            const zipObj = {};
+            zipObj["figma_export.json"] = fflate.strToU8(message.jsonString);
+            message.images.forEach(image => {
+                zipObj[`images/${image.filename}`] = new Uint8Array(image.data);
+            });
+            zipObj["figma_download_fonts.bat"] = fflate.strToU8(message.batchScript);
+            downloadFile(fflate.zipSync(zipObj), "figma_godot_export.zip", "application/zip");
+        }
+        setStatus(message.type === "response-images" && message.images.length === 0
+            ? "No images found in the selected scope."
+            : "Export complete.");
+    } catch (error) {
+        setStatus(`Export failed: ${error.message || String(error)}`, true);
+    } finally {
+        activeRequest = null;
+        updateControls();
+    }
+};
+
+const requestExport = (format) => {
+    if (activeRequest) return;
+    if (format === "zip" && typeof fflate === "undefined") {
+        setStatus("ZIP library could not load. Check your connection and reopen the plugin, or use the individual export buttons.", true);
+        return;
+    }
+    const exportType = document.querySelector("input[name='export-type']:checked").id.replace("export-", "");
+    activeRequest = { id: ++nextRequestId, format };
+    updateControls();
+    setStatus("Exporting…");
+    parent.postMessage({ pluginMessage: {
+        type: `request-${format}`, exportType, requestId: activeRequest.id
+    } }, "*");
+};
+
+for (const format of ["zip", "json", "images", "fonts"]) {
+    document.getElementById(`export-${format}`).onclick = () => requestExport(format);
+}
+parent.postMessage({ pluginMessage: { type: "request-selection-state" } }, "*");
+
+</script>

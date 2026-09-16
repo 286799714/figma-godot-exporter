@@ -1,0 +1,20 @@
+﻿[
+    {
+        "family":  "Alibaba PuHuiTi",
+        "style":  "Bold",
+        "filename":  "AlibabaPuHuiTi_Bold.ttf",
+        "status":  "downloaded",
+        "source":  "https://fonts.alibabadesign.com/AlibabaPuHuiTi/Alibaba-PuHuiTi-Bold/Alibaba-PuHuiTi-Bold.ttf",
+        "message":  "",
+        "manualUrl":  "https://www.alibabafonts.com/"
+    },
+    {
+        "family":  "Alibaba PuHuiTi",
+        "style":  "Medium",
+        "filename":  "AlibabaPuHuiTi_Medium.ttf",
+        "status":  "downloaded",
+        "source":  "https://fonts.alibabadesign.com/AlibabaPuHuiTi/Alibaba-PuHuiTi-Medium/Alibaba-PuHuiTi-Medium.ttf",
+        "message":  "",
+        "manualUrl":  "https://www.alibabafonts.com/"
+    }
+]
