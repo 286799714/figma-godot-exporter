@@ -12,7 +12,7 @@
         Page
     </label>
     <label for="export-frame" title="Exports only the current frame (if a frame is selected).">
-        <input type="radio" id="export-frame" name="export-type">
+        <input type="radio" id="export-frame" name="export-type" disabled>
         Frame
     </label>
 </div>
@@ -22,6 +22,8 @@
     <button type="button" id="export-images" title="Exports all images in the current page/project as png files.">Images only</button>
     <button type="button" id="export-fonts" title="Locates all fonts used in the current page/project and creates a batch script to download them.">Fonts only</button>
 </div>
+
+<p id="export-status" role="status" aria-live="polite"></p>
 
 <style>
 body {
@@ -91,6 +93,16 @@ button {
     padding: 0.5rem;
     border-radius: 0.25rem;
 }
+button:disabled {
+    opacity: 0.5;
+}
+#export-status {
+    margin-top: 0.75rem;
+    overflow-wrap: anywhere;
+}
+#export-status[data-error="true"] {
+    color: #b42318;
+}
 #button-container {
     display: flex;
     flex-direction: row;
@@ -111,10 +123,25 @@ button {
 </style>
 
 <script>
-let exportingZip = false;
-let jsonResponse = undefined;
-let imagesResponse = undefined;
-let fontsResponse = undefined;
+let activeRequest = null;
+let nextRequestId = 0;
+let isFrameSelected = false;
+const statusElement = document.getElementById("export-status");
+const controls = document.querySelectorAll("button, input[name='export-type']");
+
+const updateControls = () => {
+    controls.forEach(control => { control.disabled = activeRequest !== null; });
+    const frameInput = document.getElementById("export-frame");
+    frameInput.disabled = activeRequest !== null || !isFrameSelected;
+    if (!isFrameSelected && frameInput.checked) {
+        document.getElementById("export-page").checked = true;
+    }
+};
+
+const setStatus = (message, isError = false) => {
+    statusElement.textContent = message;
+    statusElement.dataset.error = String(isError);
+};
 
 const downloadFile = (content, filename, type) => {
     const blob = new Blob([content], { type });
@@ -122,93 +149,71 @@ const downloadFile = (content, filename, type) => {
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
-}
+    a.remove();
+    // Give the browser time to start reading the blob before releasing it.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 
-onmessage = async (event) => {
-    // Handle response-is-frame-selected message
-    if (event.data.pluginMessage.type === "response-is-frame-selected") {
-        const isFrameSelected = event.data.pluginMessage.isFrameSelected;
-        if (!isFrameSelected) {
-            document.getElementById("export-frame").disabled = true;
-        }
+onmessage = (event) => {
+    const message = event.data && event.data.pluginMessage;
+    if (!message) return;
+    if (message.type === "response-is-frame-selected") {
+        isFrameSelected = message.isFrameSelected;
+        updateControls();
+        return;
     }
-
-    // Handle response-json message
-    if (event.data.pluginMessage.type === "response-json") {
-        jsonResponse = event.data.pluginMessage.jsonString;
-        if (!exportingZip) {
-            downloadFile(jsonResponse, "figma_layout.json", "application/json");
-            jsonResponse = undefined;
-        }
-    }
-
-    // Handle response-images message
-    if (event.data.pluginMessage.type === "response-images") {
-        imagesResponse = event.data.pluginMessage.images;
-        if (!exportingZip) {
-            (imagesResponse || []).forEach(image => {
+    if (!activeRequest || message.requestId !== activeRequest.id) return;
+    if (message.type !== "response-error" && message.type !== `response-${activeRequest.format}`) return;
+    try {
+        if (message.type === "response-error") throw new Error(message.message);
+        if (message.type === "response-json") {
+            downloadFile(message.jsonString, "figma_layout.json", "application/json");
+        } else if (message.type === "response-images") {
+            message.images.forEach(image => {
                 downloadFile(image.data, image.filename, "image/png");
             });
-            imagesResponse = undefined;
+        } else if (message.type === "response-fonts") {
+            downloadFile(message.batchScript, "figma_download_fonts.bat", "text/plain");
+        } else if (message.type === "response-zip") {
+            const zipObj = {};
+            zipObj["figma_export.json"] = fflate.strToU8(message.jsonString);
+            message.images.forEach(image => {
+                zipObj[`images/${image.filename}`] = new Uint8Array(image.data);
+            });
+            zipObj["figma_download_fonts.bat"] = fflate.strToU8(message.batchScript);
+            downloadFile(fflate.zipSync(zipObj), "figma_godot_export.zip", "application/zip");
         }
+        setStatus(message.type === "response-images" && message.images.length === 0
+            ? "No images found in the selected scope."
+            : "Export complete.");
+    } catch (error) {
+        setStatus(`Export failed: ${error.message || String(error)}`, true);
+    } finally {
+        activeRequest = null;
+        updateControls();
     }
+};
 
-    // Handle response-fonts message
-    if (event.data.pluginMessage.type === "response-fonts") {
-        fontsResponse = event.data.pluginMessage.batchScript;
-        if (!exportingZip) {
-            downloadFile(fontsResponse, "figma_download_fonts.bat", "text/plain");
-            fontsResponse = undefined;
-        }
+const requestExport = (format) => {
+    if (activeRequest) return;
+    if (format === "zip" && typeof fflate === "undefined") {
+        setStatus("ZIP library could not load. Check your connection and reopen the plugin, or use the individual export buttons.", true);
+        return;
     }
+    const exportType = document.querySelector("input[name='export-type']:checked").id.replace("export-", "");
+    activeRequest = { id: ++nextRequestId, format };
+    updateControls();
+    setStatus("Exporting…");
+    parent.postMessage({ pluginMessage: {
+        type: `request-${format}`, exportType, requestId: activeRequest.id
+    } }, "*");
+};
 
-    // Download all responses as a single zip after all responses are received
-    if (exportingZip && jsonResponse !== undefined && imagesResponse !== undefined && fontsResponse !== undefined) {
-        const zipObj = {};
-        zipObj["figma_export.json"] = fflate.strToU8(jsonResponse);
-        imagesResponse.forEach(image => {
-            zipObj[`images/${image.filename}`] = new Uint8Array(image.data);
-        });
-        zipObj["figma_download_fonts.bat"] = fflate.strToU8(fontsResponse);
-        const zipped = fflate.zipSync(zipObj);
-        downloadFile(zipped, "figma_godot_export.zip", "application/zip");
-        jsonResponse = undefined;
-        imagesResponse = undefined
-        fontsResponse = undefined;
-    }
+for (const format of ["zip", "json", "images", "fonts"]) {
+    document.getElementById(`export-${format}`).onclick = () => requestExport(format);
 }
-
-document.getElementById("export-project").onclick = () => {
-    parent.postMessage({ pluginMessage: { type: "export-type", exportType: "project" } }, "*");
-};
-
-document.getElementById("export-page").onclick = () => {
-    parent.postMessage({ pluginMessage: { type: "export-type", exportType: "page" } }, "*");
-};
-
-document.getElementById("export-frame").onclick = () => {
-    parent.postMessage({ pluginMessage: { type: "export-type", exportType: "frame" } }, "*");
-};
-
-document.getElementById("export-zip").onclick = () => {
-    exportingZip = true;
-    parent.postMessage({ pluginMessage: { type: "request-json" } }, "*");
-    parent.postMessage({ pluginMessage: { type: "request-images" } }, "*");
-    parent.postMessage({ pluginMessage: { type: "request-fonts" } }, "*");
-};
-
-document.getElementById("export-json").onclick = () => {
-  parent.postMessage({ pluginMessage: { type: "request-json" } }, "*");
-};
-
-document.getElementById("export-images").onclick = () => {
-  parent.postMessage({ pluginMessage: { type: "request-images" } }, "*");
-};
-
-document.getElementById("export-fonts").onclick = () => {
-  parent.postMessage({ pluginMessage: { type: "request-fonts" } }, "*");
-};
+parent.postMessage({ pluginMessage: { type: "request-selection-state" } }, "*");
 
 </script>
